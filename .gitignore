@@ -8,6 +8,8 @@ node_modules/
 
 # Build artifacts
 *.exe
+# ...except the Windows installer we ship in the repo on purpose
+!MyFlow_*-setup.exe
 *.msi
 *.msix
 *.dmg
