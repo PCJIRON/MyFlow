@@ -1,0 +1,14 @@
+{
+  "name": "myflow",
+  "private": true,
+  "version": "0.1.0",
+  "scripts": {
+    "dev": "tauri dev",
+    "build": "tauri build",
+    "check": "tauri build --no-bundle",
+    "icon": "node tools/make-tray-icon.mjs"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2"
+  }
+}

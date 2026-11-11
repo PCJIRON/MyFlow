@@ -1,0 +1,34 @@
+# Rust / Tauri build output
+src-tauri/target/
+target/
+gen/
+
+# Node
+node_modules/
+
+# Build artifacts
+*.exe
+*.msi
+*.msix
+*.dmg
+*.AppImage
+*.deb
+*.rpm
+
+# Logs / captured output
+*.log
+*.out
+*.err
+
+# Local secrets / config (never commit)
+.env
+.env.*
+!.env.example
+.dev.vars
+settings.json
+
+# Editor / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

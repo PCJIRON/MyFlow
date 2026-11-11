@@ -1,0 +1,421 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8" />
+<style>
+  :root {
+    --bg: rgba(15,15,18,.96);
+    --line: rgba(255,255,255,.07);
+    --txt: #ececf2;
+    --dim: #8b8b98;
+    --accent: #e35244;
+    --idle: #000000;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; user-select: none; }
+  html, body {
+    background: transparent; overflow: hidden; width: 100%; height: 100%;
+    font-family: "Segoe UI Variable Display", "Segoe UI", sans-serif;
+  }
+  /* The window is resized to fit the bar (idle / hover / recording), so the
+     wrapper only has to centre it with 1px of breathing room. */
+  #wrap { position: fixed; left: 1px; top: 1px; right: 1px; bottom: 1px; display: flex; align-items: center; justify-content: center; }
+  /* Wispr-style pill: rests as a thin bar and expands into the full pill on hover.
+     The window itself stays 400x66, so nothing below it shifts when it grows. */
+  #pill {
+    display: flex; align-items: center; gap: 8px; flex: none;
+    width: 52px; height: 8px; padding: 0; overflow: hidden;
+    background: var(--idle);
+    border: 1px solid rgba(255,255,255,.16); border-radius: 999px;
+    box-shadow: none;
+    cursor: default;
+    transition: width .28s cubic-bezier(.22,.9,.24,1),
+                height .28s cubic-bezier(.22,.9,.24,1),
+                padding .28s cubic-bezier(.22,.9,.24,1),
+                background .22s ease, border-color .22s ease;
+  }
+  #pill.open {
+    width: 100%; height: 54px; padding: 0 7px; gap: 10px;
+    background: rgba(13,13,16,.97); backdrop-filter: blur(22px);
+    border-color: rgba(255,255,255,.09);
+    box-shadow: none;
+  }
+  /* Recording: the bar stays a small capsule and the waveform animates inside it. */
+  #pill.isrec, #pill.isrec.open {
+    width: 128px; height: 30px; padding: 0 14px; gap: 3px;
+    justify-content: center;
+    background: #0a0a0c;
+    border-color: rgba(255,255,255,.12);
+    box-shadow: none;
+  }
+  #pill.isrec #mic, #pill.isrec #body, #pill.isrec .knob { display: none; }
+  /* No circle/plate behind the buttons, ever — not at rest and not on hover. */
+  .knob {
+    width: 42px; height: 42px; border-radius: 50%; flex: none;
+    display: flex; align-items: center; justify-content: center;
+    background: transparent; border: 0;
+    color: #d3d3db; cursor: pointer;
+    opacity: 0; transform: scale(.9);
+    transition: opacity .16s ease, transform .2s ease, color .16s;
+  }
+  #pill.open .knob, #pill.isrec .knob { opacity: 1; transform: none; }
+  .knob svg { width: 19px; height: 19px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+  .knob:hover { color: #ffffff; }
+  .knob:active { transform: scale(.93); }
+  #mic { background: transparent; border: 0; width: 44px; height: 44px; }
+  #mic .rec-ic { display: none; }
+  #wave { display: none; align-items: center; justify-content: center; gap: 3px; flex: none; height: 22px; }
+  .isrec #wave { display: flex; }
+  .bar { width: 3px; height: 4px; border-radius: 2px; background: #ffffff; }
+  /* Small bounce; the four staggered rules keep neighbouring bars out of sync
+     so the capsule reads as live audio rather than one block pulsing. */
+  @keyframes wv { 0%, 100% { height: 4px; } 50% { height: 18px; } }
+  .isrec .bar { animation: wv .9s ease-in-out infinite; }
+  .isrec .bar:nth-child(3n) { animation-duration: 1.15s; animation-delay: -.25s; }
+  .isrec .bar:nth-child(3n+1) { animation-duration: .75s; animation-delay: -.5s; }
+  .isrec .bar:nth-child(4n) { animation-duration: 1.35s; animation-delay: -.8s; }
+  .isrec .bar:nth-child(5n) { animation-duration: .6s; animation-delay: -.15s; }
+  /* Drag area: must be a real box — a zero-width element cannot be grabbed.
+     (The old selector was #body[data-v], but no data-v attribute exists, so
+     flex:1 never applied and the whole pill had no draggable surface.) */
+  #body { flex: 1 1 auto; min-width: 24px; height: 100%; }
+  #pill.isrec { cursor: default; }
+  /* No text is ever shown on the pill — only the waveform while recording. */
+  /* Sits inside the 400x66 window so failures are actually readable. */
+  #err {
+    position: fixed; left: 50%; top: 50%; transform: translate(-50%, -50%);
+    max-width: 384px; max-height: 54px; overflow: hidden;
+    background: rgba(38,15,18,.97); border: 1px solid rgba(227,82,68,.5); color: #ffb4ad;
+    padding: 7px 13px; border-radius: 10px; font-size: 11px; line-height: 1.4;
+    text-align: center; word-break: break-word;
+    opacity: 0; transition: opacity .25s; pointer-events: none; z-index: 6;
+  }
+  #err.show { opacity: 1; }
+
+  /* Docked left/right: the same bar, standing up, and the waveform turns with
+     it — bars grow sideways instead of up. */
+  body.vert #pill { width: 8px; height: 52px; }
+  body.vert #pill.open {
+    width: 54px; height: 212px; padding: 8px 0; gap: 8px;
+    flex-direction: column;
+  }
+  body.vert #body { width: 100%; height: auto; min-width: 0; min-height: 20px; flex: 1 1 auto; }
+  body.vert #pill.isrec, body.vert #pill.isrec.open {
+    width: 30px; height: 128px; padding: 14px 0; flex-direction: column;
+  }
+  body.vert #wave { flex-direction: column; width: 22px; height: auto; }
+  body.vert .bar { width: 4px; height: 3px; }
+  @keyframes wvh { 0%, 100% { width: 4px; } 50% { width: 18px; } }
+  body.vert .isrec .bar { animation-name: wvh; }
+</style>
+</head>
+<body>
+<div id="wrap">
+<div id="pill" data-tauri-drag-region>
+  <div class="knob" id="mic" title="Record">
+    <svg class="idle-ic" viewBox="0 0 24 24"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0"/><path d="M12 18v3"/></svg>
+    <svg class="rec-ic" viewBox="0 0 24 24"><circle cx="12" cy="12" r="6" fill="currentColor" stroke="none"/></svg>
+  </div>
+  <div id="wave"></div>
+  <div id="body" data-tauri-drag-region></div>
+  <div class="knob" id="notes-btn" title="Notes">
+    <svg viewBox="0 0 24 24"><rect x="4" y="4" width="16" height="17" rx="3"/><path d="M8 9h8M8 13h8M8 17h5"/></svg>
+  </div>
+  <div class="knob" id="cog" title="Settings">
+    <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3.2"/><path d="M19.4 15a1.7 1.7 0 0 0 .34 1.87l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.7 1.7 0 0 0-1.87-.34 1.7 1.7 0 0 0-1.03 1.56V21a2 2 0 1 1-4 0v-.09a1.7 1.7 0 0 0-1.11-1.56 1.7 1.7 0 0 0-1.87.34l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.7 1.7 0 0 0 .34-1.87 1.7 1.7 0 0 0-1.56-1.03H3a2 2 0 1 1 0-4h.09a1.7 1.7 0 0 0 1.56-1.11 1.7 1.7 0 0 0-.34-1.87l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.7 1.7 0 0 0 1.87.34h.08A1.7 1.7 0 0 0 10.12 5V5a2 2 0 1 1 4 0v.09a1.7 1.7 0 0 0 1.03 1.56 1.7 1.7 0 0 0 1.87-.34l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.7 1.7 0 0 0-.34 1.87v.08a1.7 1.7 0 0 0 1.56 1.03H21a2 2 0 1 1 0 4h-.09a1.7 1.7 0 0 0-1.56 1.03z"/></svg>
+  </div>
+</div>
+</div>
+<div id="err"></div>
+<script>
+(async () => {
+  const { invoke } = window.__TAURI__.core;
+  const { listen } = window.__TAURI__.event;
+  const log = (m) => { try { invoke("sr_error", { msg: "sr:js " + m }).catch(() => {}); } catch (e) {} };
+  window.addEventListener("error", (ev) => { log("window.onerror " + ev.message + " @" + (ev.filename || "?") + ":" + (ev.lineno || 0)); });
+  window.addEventListener("unhandledrejection", (ev) => { log("unhandledrejection " + (ev.reason && ev.reason.message ? ev.reason.message : String(ev.reason))); });
+
+  const wave = document.getElementById("wave");
+  const pill = document.getElementById("pill");
+  const errBox = document.getElementById("err");
+  const bodyEl = document.getElementById("body");
+
+  const setTitle = (t) => { try { invoke("debug_title", { title: t }).catch(() => {}); } catch (e) {} };
+
+  // The window is only as large as the bar, so the page asks Rust for a bigger
+  // or smaller footprint instead of leaving an invisible 400x66 area that
+  // swallowed clicks meant for other apps.
+  let recordingUI = false;
+  const fit = (state) => { try { invoke("pill_fit", { state }).catch(() => {}); } catch (e) {} };
+  const refit = () => fit(recordingUI ? "rec" : (pill.classList.contains("open") ? "open" : "idle"));
+
+  // Rust decides which edge the pill is stuck to; left/right docking stands the
+  // bar up and swaps the waveform animation to horizontal bars.
+  const applyOrient = (v) => {
+    document.body.classList.toggle("vert", v === "v");
+    setTitle(v === "v" ? "VERT-OK" : "HORZ-OK");
+    // The footprint swaps sides too (54x10 becomes 10x54 and so on).
+    refit();
+  };
+  try { applyOrient(await invoke("pill_orient")); } catch (e) { log("orient fail " + (e && e.message ? e.message : String(e))); }
+  listen("pill-orient", (e) => applyOrient(String(e.payload)));
+
+  log("boot ok");
+  {
+    const b = bodyEl.getBoundingClientRect(), p = pill.getBoundingClientRect();
+    log("layout body=" + Math.round(b.width) + "x" + Math.round(b.height) +
+        " pill=" + Math.round(p.width) + "x" + Math.round(p.height));
+  }
+  setTitle("BOOT-OK");
+  for (let i = 0; i < 16; i++) {
+    const b = document.createElement("div");
+    b.className = "bar";
+    wave.appendChild(b);
+  }
+  const bars = [...wave.children];
+
+  // The window is created hidden. Tell Rust to reveal it only once this page has
+  // actually rendered a frame — showing it earlier is what left the bar
+  // invisible until something resized the window.
+  const signalReady = () => { try { invoke("pill_ready").catch(() => {}); } catch (e) {} };
+  requestAnimationFrame(() => requestAnimationFrame(() => {
+    signalReady();
+    setTimeout(signalReady, 400);
+    refit(); // match the window to the bar the page just painted
+  }));
+
+  function setRec(on) {
+    recordingUI = on;
+    if (on) {
+      pill.classList.remove("open");
+      fit("rec");
+    }
+    pill.classList.toggle("isrec", on);
+    if (!on) {
+      // heights are driven by the CSS animation — never leave inline values behind
+      bars.forEach(b => { b.style.height = ""; });
+      // Let the capsule finish shrinking inside the window before it gets small.
+      setTimeout(() => { if (!pill.classList.contains("open") && !recordingUI) fit("idle"); }, 320);
+    }
+  }
+
+  // Rust polls the real cursor position and tells the page — DOM mouse events
+  // misfire when the window is resized underneath the pointer.
+  listen("pill-hover", (e) => {
+    if (e.payload) {
+      if (recordingUI) return; // the capsule is the whole surface while recording
+      fit("open");
+      pill.classList.add("open");
+    } else {
+      pill.classList.remove("open");
+      if (recordingUI) return;
+      setTimeout(() => { if (!pill.classList.contains("open")) fit("idle"); }, 320);
+    }
+  });
+
+  // ---------- Google Web Speech engine (built into the WebView) ----------
+  const SR = window.SpeechRecognition || window.webkitSpeechRecognition || null;
+  let sr = null;
+  let recording = false;
+  let srWantedStop = false;
+  let lastInterim = "";
+  log("sr-detected:" + (SR ? "yes" : "no"));
+
+  let settings = null;
+  try {
+    settings = await invoke("get_settings");
+    setTitle("SETTINGS-OK-" + (settings && settings.language ? settings.language : "?"));
+  } catch (e) {
+    setTitle("BOOT-FAIL-SETTINGS");
+    log("settings fail " + (e && e.message ? e.message : String(e)));
+  }
+  log("settings loaded lang=" + (settings && settings.language));
+  // Settings are cached at boot, so re-read them before every session —
+  // otherwise a language changed in the Settings window is ignored until restart.
+  async function refreshSettings() {
+    try {
+      const s = await invoke("get_settings");
+      if (s) {
+        if (!settings || s.language !== settings.language || s.provider !== settings.provider)
+          log("settings refreshed provider=" + s.provider + " lang=" + s.language);
+        settings = s;
+      }
+    } catch (e) {
+      log("settings refresh fail " + (e && e.message ? e.message : String(e)));
+    }
+  }
+  // Hinglish uses the Indian-English recogniser: it keeps the transcript in
+  // Latin script (English words stay English, Hindi comes back romanised).
+  // hi-IN always returns Devanagari, even for English words, so it is only
+  // used for the explicit "Hindi" option.
+  const LANG = {
+    "en": "en-IN",
+    "hinglish": "en-IN",
+    "hi": "hi-IN"
+  };
+
+  function srStart() {
+    if (!SR) { err("Speech engine unavailable in this WebView"); return Promise.resolve(); }
+    if (sr) return Promise.resolve();
+    return new Promise((res) => {
+      const r = new SR();
+      r.lang = LANG[settings && settings.language] || "hi-IN";
+      r.continuous = true;
+      r.interimResults = true;
+      r.maxAlternatives = 1;
+      r.onresult = (ev) => {
+        let gotAny = false;
+        for (let i = ev.resultIndex; i < ev.results.length; i++) {
+          const res = ev.results[i];
+          const t = res[0].transcript.trim();
+          log("sr:result final=" + res.isFinal + " t=" + t);
+          if (res.isFinal) {
+            if (t) invoke("sr_final", { text: t }).catch((e2) => { log("sr_final FAIL " + (e2 && e2.message ? e2.message : String(e2))); });
+            lastInterim = "";
+            invoke("sr_partial", { text: "" }).catch(() => {});
+          } else if (t && t !== lastInterim) {
+            // live preview for the Notes window — never typed, never pasted
+            lastInterim = t;
+            invoke("sr_partial", { text: t }).catch(() => {});
+          }
+          gotAny = true;
+        }
+        if (!gotAny) log("sr:result EMPTY-event");
+      };
+      r.onstart = () => { invoke("sr_error", { msg: "sr:start-ok lang=" + r.lang }).catch(() => {}); };
+      r.onaudiostart = () => { invoke("sr_error", { msg: "sr:audiostart" }).catch(() => {}); };
+      r.onsoundstart = () => { invoke("sr_error", { msg: "sr:soundstart" }).catch(() => {}); };
+      r.onspeechstart = () => { invoke("sr_error", { msg: "sr:speechstart" }).catch(() => {}); };
+      r.onspeechend = () => { invoke("sr_error", { msg: "sr:speechend" }).catch(() => {}); };
+      r.onnomatch = () => { invoke("sr_error", { msg: "sr:nomatch" }).catch(() => {}); };
+      r.onerror = (ev) => {
+        const m = String(ev.error || "speech-error");
+        if (m === "no-speech") {
+          // silence — keep listening
+          invoke("sr_error", { msg: "sr:no-speech (restart pending)" }).catch(() => {});
+        } else if (m !== "aborted") {
+          invoke("sr_error", { msg: "sr:error " + m }).catch(() => {});
+          if (m === "not-allowed" || m === "service-not-allowed") {
+            err("Mic permission block ho gayi — app dobara launch karo aur Allow dabao");
+          } else if (m === "network") {
+            err("Speech service tak network fail — check network");
+          } else {
+            err("Speech error: " + m);
+          }
+        }
+      };
+      r.onend = () => {
+        sr = null;
+        invoke("sr_error", { msg: "sr:end wantedStop=" + srWantedStop + " recording=" + recording }).catch(() => {});
+        if (recording && !srWantedStop) {
+          // Chrome auto-ends after silence — restart to stay continuous
+          setTimeout(() => { if (recording && !sr) try { srStart(); } catch (e) {} }, 250);
+        }
+      };
+      sr = r;
+      invoke("sr_error", { msg: "sr:start requested lang=" + r.lang }).catch(() => {});
+      try { r.start(); } catch (e) { sr = null; invoke("sr_error", { msg: "sr:start-throw " + e.message }).catch(() => {}); err("Speech start failed"); }
+      res();
+    });
+  }
+
+  function srStop() {
+    srWantedStop = true;
+    lastInterim = "";
+    invoke("sr_partial", { text: "" }).catch(() => {});
+    if (sr) { try { sr.stop(); } catch (e) {} }
+  }
+
+  // ---------- Groq path: record a clip, let the model transcribe it ----------
+  let mediaRec = null;
+  let mediaStream = null;
+  let chunks = [];
+
+  function b64(blob) {
+    return new Promise((res, rej) => {
+      const fr = new FileReader();
+      fr.onload = () => res(String(fr.result).split(",")[1] || "");
+      fr.onerror = () => rej(fr.error);
+      fr.readAsDataURL(blob);
+    });
+  }
+
+  async function groqStart() {
+    try {
+      mediaStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      chunks = [];
+      const type = ["audio/webm;codecs=opus", "audio/webm", "audio/ogg;codecs=opus", "audio/mp4"]
+        .find(t => window.MediaRecorder && MediaRecorder.isTypeSupported(t)) || "";
+      mediaRec = type ? new MediaRecorder(mediaStream, { mimeType: type }) : new MediaRecorder(mediaStream);
+      mediaRec.ondataavailable = (ev) => { if (ev.data && ev.data.size) chunks.push(ev.data); };
+      mediaRec.onstop = async () => {
+        if (mediaStream) { mediaStream.getTracks().forEach(t => t.stop()); mediaStream = null; }
+        const blob = new Blob(chunks, { type: mediaRec && mediaRec.mimeType ? mediaRec.mimeType : "audio/webm" });
+        chunks = [];
+        log("groq clip bytes=" + blob.size);
+        if (!blob.size) { err("Nothing was recorded"); return; }
+        try {
+          await invoke("groq_transcribe", { audio: await b64(blob), mime: blob.type || "audio/webm" });
+        } catch (e) {
+          log("groq FAIL " + (e && e.message ? e.message : String(e)));
+          err("Groq: " + (e && e.message ? e.message : String(e)));
+        }
+      };
+      mediaRec.start(500);
+      log("groq record start mime=" + mediaRec.mimeType);
+    } catch (e) {
+      log("groq mic fail " + (e && e.message ? e.message : String(e)));
+      err("Microphone access failed — allow the mic for MyFlow");
+    }
+  }
+
+  function groqStop() {
+    if (mediaRec && mediaRec.state !== "inactive") { try { mediaRec.stop(); } catch (e) {} }
+    mediaRec = null;
+  }
+
+  // ---------- UI wiring ----------
+  listen("record-state", async (e) => {
+    if (e.payload === "started") {
+      recording = true;
+      srWantedStop = false;
+      setRec(true);
+      await refreshSettings(); // pick up a provider/language saved in Settings
+      if (settings && settings.provider === "groq") await groqStart();
+      else await srStart();
+    }
+    if (e.payload === "stopped" || e.payload === "stopping") {
+      recording = false;
+      setRec(false);
+      srStop();
+      groqStop();
+    }
+  });
+
+  listen("final", () => {});
+
+  let errTimer = null;
+  function err(msg) {
+    errBox.textContent = msg;
+    errBox.classList.add("show");
+    // The message needs the wide footprint, otherwise it is clipped.
+    fit("open");
+    clearTimeout(errTimer);
+    errTimer = setTimeout(() => {
+      errBox.classList.remove("show");
+      if (!pill.classList.contains("open")) refit();
+    }, 4000);
+  }
+  // Only real failures belong on screen; "sr:" lines are engine diagnostics.
+  listen("stt-error", (e) => {
+    const m = String((e && e.payload) || "");
+    if (!m || m.startsWith("sr:")) return;
+    err(m);
+  });
+
+  document.getElementById("mic").addEventListener("click", () => invoke("toggle_record"));
+  document.getElementById("cog").addEventListener("click", () => invoke("show_settings"));
+  document.getElementById("notes-btn").addEventListener("click", () => invoke("show_notes"));
+})();
+</script>
+</body>
+</html>
